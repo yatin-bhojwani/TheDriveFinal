@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+pandas
+numpy
+yfinance
+requests
+joblib
+scikit-learn
+shap
+matplotlib
+

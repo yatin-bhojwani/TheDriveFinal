@@ -1,0 +1,848 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>TheDrive</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 0; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+    .row { display: grid; gap: 16px; grid-template-columns: 1fr; }
+    .card { border: 1px solid #eee; padding: 16px; border-radius: 12px; background: white; }
+    label { display:block; margin: 8px 0 4px; }
+    input[type=text], select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+    button { padding: 8px 14px; border-radius: 8px; border: 1px solid #ddd; cursor: pointer; background: white; }
+    button:hover { background: #f0f0f0; }
+    button.primary { background: #007acc; color: white; border-color: #007acc; }
+    button.primary:hover { background: #005a9e; }
+    pre { background: #fafafa; padding: 12px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap;}
+    .cit { font-size: 13px; color: #555; }
+    
+    /* Chat Interface Styles */
+    .chat-container { 
+      display: flex; 
+      flex-direction: column; 
+      height: 600px; 
+      border: 1px solid #ddd; 
+      border-radius: 12px; 
+      background: white;
+      overflow: hidden;
+    }
+    .chat-header {
+      padding: 16px;
+      background: #007acc;
+      color: white;
+      font-weight: bold;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .chat-messages { 
+      flex: 1; 
+      padding: 16px; 
+      overflow-y: auto; 
+      display: flex; 
+      flex-direction: column; 
+      gap: 12px;
+      background: #fafafa;
+    }
+    .message { 
+      max-width: 80%; 
+      padding: 12px 16px; 
+      border-radius: 18px; 
+      word-wrap: break-word;
+      position: relative;
+    }
+    .message.user { 
+      align-self: flex-end; 
+      background: #007acc; 
+      color: white; 
+      margin-left: auto;
+    }
+    .message.assistant { 
+      align-self: flex-start; 
+      background: white; 
+      border: 1px solid #e0e0e0;
+      margin-right: auto;
+    }
+    .message.system { 
+      align-self: center; 
+      background: #fff3cd; 
+      border: 1px solid #ffeaa7; 
+      font-size: 12px; 
+      max-width: 60%;
+      text-align: center;
+      font-style: italic;
+    }
+    .message-meta {
+      font-size: 11px;
+      color: #666;
+      margin-top: 4px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .typing-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px;
+      background: white;
+      border: 1px solid #e0e0e0;
+      border-radius: 18px;
+      margin-right: auto;
+      max-width: 80%;
+    }
+    .typing-dots {
+      display: flex;
+      gap: 4px;
+    }
+    .typing-dots span {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #007acc;
+      animation: typing 1.4s infinite ease-in-out;
+    }
+    .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes typing {
+      0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+      30% { transform: translateY(-10px); opacity: 1; }
+    }
+    .chat-input-area {
+      padding: 16px;
+      border-top: 1px solid #e0e0e0;
+      background: white;
+    }
+    .chat-input-row {
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+    }
+    .chat-input {
+      flex: 1;
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 20px;
+      resize: none;
+      min-height: 20px;
+      max-height: 100px;
+      font-family: inherit;
+    }
+    .send-button {
+      padding: 12px 20px;
+      background: #007acc;
+      color: white;
+      border: none;
+      border-radius: 20px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    .send-button:hover:not(:disabled) { background: #005a9e; }
+    .send-button:disabled { background: #ccc; cursor: not-allowed; }
+    .chat-controls {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+    .chat-controls select, .chat-controls input {
+      padding: 6px 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    .status-bar {
+      padding: 4px 16px;
+      background: #f8f9fa;
+      border-top: 1px solid #e0e0e0;
+      font-size: 12px;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>TheDrive (Local RAG)</h1>
+    <p>Upload files (PDF, TXT, DOCX, CSV), then chat about them with AI that remembers the conversation!</p>
+
+    <div class="row">
+    <div class="card">
+      <h3>1) Ingest Files</h3>
+      <form id="ingestForm">
+        <label>File (PDF, TXT, DOCX, CSV)</label>
+        <input type="file" name="file" accept=".pdf,.txt,.docx,.csv,.md,.rst" required />
+        <label>file_id</label>
+        <input type="text" name="file_id" placeholder="eg: sample_file" required />
+        <label>folder_id (optional)</label>
+        <input type="text" name="folder_id" placeholder="eg: reports" />
+        <label>Endpoint</label>
+        <select name="endpoint" id="endpoint">
+          <option value="/ingest/file">Auto-detect (Universal)</option>
+          <option value="/ingest/pdf">PDF Specific</option>
+          <option value="/ingest/text">Text Specific</option>
+          <option value="/ingest/docx">DOCX Specific</option>
+          <option value="/ingest/csv">CSV Specific</option>
+        </select>
+        <button type="submit">Ingest</button>
+      </form>
+      <pre id="ingestOut"></pre>
+    </div>
+
+    <div class="card">
+      <h3>2) Chat (REST)</h3>
+      <label>Scope</label>
+      <select id="scope">
+        <option value="drive">drive</option>
+        <option value="folder">folder</option>
+        <option value="file">file</option>
+      </select>
+      <label>folder_id (if scope=folder)</label>
+      <input id="folder_id" type="text" placeholder="reports" />
+      <label>file_id (if scope=file)</label>
+      <input id="file_id" type="text" placeholder="sample_file" />
+      <label>Question</label>
+      <input id="query" type="text" placeholder="What are the key points?" />
+      <button id="askBtn">Ask</button>
+      <pre id="chatOut"></pre>
+    </div>
+
+    <div class="card">
+      <h3>💬 Chat with AI (Conversation Memory)</h3>
+      <p class="cit">AI that remembers your conversation and detects follow-up questions. Try asking about your documents, then ask follow-ups!</p>
+      
+      <div class="chat-container">
+        <div class="chat-header">
+          <div>
+            <span id="sessionDisplay">Session: default_session</span>
+            <span id="turnCounter">(0 turns)</span>
+          </div>
+          <div>
+            <button id="clearSessionBtn" style="background: rgba(255,255,255,0.2); border: none; color: white; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;">🗑️ Clear</button>
+          </div>
+        </div>
+        
+        <div class="chat-messages" id="chatMessages">
+          <div class="message system">
+            Welcome! Upload documents above, then start chatting. I'll remember our conversation and understand follow-up questions.
+          </div>
+        </div>
+        
+        <div class="status-bar" id="statusBar">
+          Ready to chat
+        </div>
+        
+        <div class="chat-input-area">
+          <div class="chat-controls">
+            <label style="margin: 0; font-size: 12px;">Session:</label>
+            <input id="sessionId" type="text" placeholder="session_123" value="default_session" style="width: 120px;" />
+            <label style="margin: 0; font-size: 12px;">Scope:</label>
+            <select id="convScope">
+              <option value="drive">drive</option>
+              <option value="folder">folder</option>
+              <option value="file">file</option>
+            </select>
+            <input id="convFolderId" type="text" placeholder="folder_id" style="width: 80px;" />
+            <input id="convFileId" type="text" placeholder="file_id" style="width: 80px;" />
+          </div>
+          
+          <div class="chat-input-row">
+            <textarea id="chatInput" class="chat-input" placeholder="Ask me anything about your documents..." rows="1"></textarea>
+            <button id="sendBtn" class="send-button">Send</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>3) Chat (MCP-style JSON-RPC)</h3>
+      <p class="cit">Calls <code>/mcp</code> with method <code>chat.answer</code>.</p>
+      <label>Question</label>
+      <input id="rpcQuery" type="text" placeholder="Summarize the report" />
+      <button id="rpcBtn">Call MCP</button>
+      <pre id="rpcOut"></pre>
+    </div>
+
+    <div class="card">
+      <h3>4) Debug Panel (Streaming SSE)</h3>
+      <p class="cit">Shows detailed debug info for both regular and conversation chat. Uses SSE on <code>/chat/stream</code> or <code>/chat/conversation/{session}/stream</code>.</p>
+      <p class="cit"><strong>Pro tip:</strong> Fill out the conversation chat fields above, then click this button to see conversation debug info!</p>
+      <button id="askStreamBtn">Debug Stream (uses conversation inputs if filled)</button>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+        <div>
+          <h4>Status:</h4>
+          <pre id="chatStreamStatus" style="background: #e8f4fd; min-height: 60px;"></pre>
+        </div>
+        <div>
+          <h4>Debug Info & Citations:</h4>
+          <pre id="chatStreamMeta" style="background: #fff3cd; min-height: 200px; font-size: 11px;"></pre>
+        </div>
+      </div>
+      <h4>Response Stream:</h4>
+      <pre id="chatStreamOut" style="background: #d4edda; min-height: 200px;"></pre>
+    </div>
+    </div>
+  </div>
+
+  <script>
+    const ingestForm = document.getElementById('ingestForm');
+    ingestForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(ingestForm);
+      const endpoint = document.getElementById('endpoint').value;
+      const res = await fetch(endpoint, { method: 'POST', body: fd });
+      const data = await res.json();
+      document.getElementById('ingestOut').textContent = JSON.stringify(data, null, 2);
+    });
+
+    document.getElementById('askBtn').addEventListener('click', async () => {
+      const payload = {
+        query: document.getElementById('query').value,
+        scope: document.getElementById('scope').value,
+        folder_id: document.getElementById('folder_id').value || null,
+        file_id: document.getElementById('file_id').value || null,
+        k: 10
+      };
+      const res = await fetch('/chat', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      document.getElementById('chatOut').textContent = JSON.stringify(data, null, 2);
+    });
+
+    document.getElementById('rpcBtn').addEventListener('click', async () => {
+      const payload = {
+        jsonrpc: "2.0",
+        id: "1",
+        method: "chat.answer",
+        params: { query: document.getElementById('rpcQuery').value, scope: "drive" }
+      };
+      const res = await fetch('/mcp', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      document.getElementById('rpcOut').textContent = JSON.stringify(data, null, 2);
+    });
+
+    // ----- Streaming via SSE -----
+    document.getElementById('askStreamBtn').addEventListener('click', () => {
+      // Check if conversation inputs are filled, use those, otherwise use regular inputs
+      const convQuery = document.getElementById('convQuery').value;
+      const convScope = document.getElementById('convScope').value;
+      const convFolderId = document.getElementById('convFolderId').value;
+      const convFileId = document.getElementById('convFileId').value;
+      const convSessionId = document.getElementById('sessionId').value;
+      
+      const query = convQuery || document.getElementById('query').value;
+      const scope = convScope && convQuery ? convScope : document.getElementById('scope').value;
+      const folderId = (convFolderId && convQuery) ? convFolderId : document.getElementById('folder_id').value || "";
+      const fileId = (convFileId && convQuery) ? convFileId : document.getElementById('file_id').value || "";
+      const k = 10;
+
+      document.getElementById('chatStreamOut').textContent = "";
+      document.getElementById('chatStreamMeta').textContent = "";
+      
+      if (convQuery && convSessionId) {
+        document.getElementById('chatStreamStatus').textContent = `starting conversation stream for session: ${convSessionId}...`;
+        
+        // Use conversation streaming endpoint
+        const params = new URLSearchParams({ query, scope, folder_id: folderId, file_id: fileId, k: String(k) });
+        const es = new EventSource(`/chat/conversation/${convSessionId}/stream?${params}`);
+        
+        es.addEventListener('status', (e) => {
+          const { msg } = JSON.parse(e.data);
+          document.getElementById('chatStreamStatus').textContent = msg;
+        });
+
+        es.addEventListener('followup', (e) => {
+          const analysis = JSON.parse(e.data);
+          document.getElementById('chatStreamStatus').textContent = 
+            `Follow-up detected: ${analysis.is_followup} (confidence: ${analysis.confidence})`;
+        });
+
+        es.addEventListener('meta', (e) => {
+          const meta = JSON.parse(e.data);
+          document.getElementById('chatStreamMeta').textContent =
+            "Conversation Meta:\n" + JSON.stringify(meta, null, 2);
+        });
+
+        es.addEventListener('token', (e) => {
+          const { t } = JSON.parse(e.data);
+          const pre = document.getElementById('chatStreamOut');
+          pre.textContent += t;
+        });
+
+        es.addEventListener('done', () => {
+          document.getElementById('chatStreamStatus').textContent = "conversation stream done";
+          es.close();
+        });
+
+        es.onerror = () => {
+          document.getElementById('chatStreamStatus').textContent = "conversation stream disconnected";
+          es.close();
+        };
+        
+      } else {
+        document.getElementById('chatStreamStatus').textContent = "starting regular stream...";
+
+        const params = new URLSearchParams({ query, scope, folder_id: folderId, file_id: fileId, k: String(k) });
+        const es = new EventSource(`/chat/stream?${params}`);
+
+        es.addEventListener('status', (e) => {
+          const { msg } = JSON.parse(e.data);
+          document.getElementById('chatStreamStatus').textContent = msg;
+        });
+
+        es.addEventListener('meta', (e) => {
+          const meta = JSON.parse(e.data);
+          document.getElementById('chatStreamMeta').textContent =
+            "Citations/Meta:\n" + JSON.stringify(meta, null, 2);
+        });
+
+        es.addEventListener('token', (e) => {
+          const { t } = JSON.parse(e.data);
+          const pre = document.getElementById('chatStreamOut');
+          pre.textContent += t;
+        });
+
+        es.addEventListener('done', () => {
+          document.getElementById('chatStreamStatus').textContent = "done";
+          es.close();
+        });
+
+        es.onerror = () => {
+          document.getElementById('chatStreamStatus').textContent = "disconnected";
+          es.close();
+        };
+      }
+    });
+
+    // Old conversation UI code removed - using new chat interface
+    
+    async function updateConversationHistory(sessionId) {
+      console.log(`Updating conversation history for session: ${sessionId}`);
+      try {
+        const res = await fetch(`/chat/sessions/${sessionId}/history`);
+        console.log(`History response status: ${res.status}`);
+        
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
+        
+        const data = await res.json();
+        console.log(`History data:`, data);
+        
+        const historyDiv = document.getElementById('conversationHistory');
+        if (data.history && data.history.length > 0) {
+          let historyHtml = `<strong>Session: ${data.session_id}</strong> (${data.history.length} turns)<br><br>`;
+          data.history.forEach((turn, idx) => {
+            const timestamp = new Date(turn.timestamp).toLocaleString();
+            const answerPreview = turn.answer.length > 150 ? turn.answer.substring(0, 150) + '...' : turn.answer;
+            
+            historyHtml += `<div style="margin-bottom: 12px; padding: 8px; background: ${idx % 2 ? '#f9f9f9' : '#fff'}; border-left: 3px solid #007acc; border-radius: 4px;">`;
+            historyHtml += `<strong>Q${idx + 1}:</strong> ${turn.query}<br>`;
+            historyHtml += `<strong>A${idx + 1}:</strong> ${answerPreview}<br>`;
+            historyHtml += `<small><span style="color: #666;">Scope:</span> ${turn.scope} | `;
+            historyHtml += `<span style="color: #666;">Confidence:</span> ${(turn.confidence * 100).toFixed(1)}% | `;
+            historyHtml += `<span style="color: #666;">Time:</span> ${timestamp}</small>`;
+            historyHtml += `</div>`;
+          });
+          historyDiv.innerHTML = historyHtml;
+          console.log(`Updated history display with ${data.history.length} turns`);
+        } else {
+          historyDiv.innerHTML = '<small style="color: #666;">No conversation history for this session yet. Start chatting to build context!</small>';
+          console.log('No history found for session');
+        }
+      } catch (err) {
+        console.error('Error loading conversation history:', err);
+        const errorMsg = err.message.includes('NetworkError') ? 
+          'Network connection error - check if the server is running' : 
+          `Error loading history: ${err.message}`;
+        document.getElementById('conversationHistory').innerHTML = `<small style="color: #d63384;">${errorMsg}</small>`;
+      }
+    }
+    
+    // Auto-load conversation history when page loads
+    document.addEventListener('DOMContentLoaded', () => {
+      const defaultSessionId = document.getElementById('sessionId').value || 'default_session';
+      console.log('Page loaded, loading conversation history for:', defaultSessionId);
+      updateConversationHistory(defaultSessionId);
+      initializeChatInterface();
+    });
+
+    // ========== NEW CHAT INTERFACE ==========
+    
+    let currentEventSource = null;
+    let messageCount = 0;
+    
+    function initializeChatInterface() {
+      console.log('Initializing chat interface...');
+      
+      const chatInput = document.getElementById('chatInput');
+      const sendBtn = document.getElementById('sendBtn');
+      const sessionId = document.getElementById('sessionId');
+      
+      console.log('Elements found:', { chatInput: !!chatInput, sendBtn: !!sendBtn, sessionId: !!sessionId });
+      
+      if (!chatInput || !sendBtn || !sessionId) {
+        console.error('Missing required elements for chat interface');
+        return;
+      }
+      
+      // Auto-resize textarea
+      chatInput.addEventListener('input', function() {
+        this.style.height = 'auto';
+        this.style.height = Math.min(this.scrollHeight, 100) + 'px';
+      });
+      
+      // Send message on Enter (Shift+Enter for new line)
+      chatInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          console.log('Enter pressed, sending message');
+          sendMessage();
+        }
+      });
+      
+      // Send button click
+      sendBtn.addEventListener('click', function(e) {
+        console.log('Send button clicked');
+        e.preventDefault();
+        sendMessage();
+      });
+      
+      // Clear session
+      const clearBtn = document.getElementById('clearSessionBtn');
+      if (clearBtn) {
+        clearBtn.addEventListener('click', clearSession);
+      }
+      
+      // Update session display when session ID changes
+      sessionId.addEventListener('input', function() {
+        updateSessionDisplay();
+        loadChatHistory();
+      });
+      
+      // Load initial chat history and update display
+      updateSessionDisplay();
+      loadChatHistory();
+      
+      console.log('Chat interface initialized successfully');
+    }
+    
+    function updateSessionDisplay() {
+      const sessionId = document.getElementById('sessionId').value || 'default_session';
+      document.getElementById('sessionDisplay').textContent = `Session: ${sessionId}`;
+    }
+    
+    function addMessage(content, type = 'user', meta = null) {
+      const chatMessages = document.getElementById('chatMessages');
+      const messageDiv = document.createElement('div');
+      messageDiv.className = `message ${type}`;
+      
+      if (type === 'user') {
+        messageDiv.textContent = content;
+      } else if (type === 'assistant') {
+        messageDiv.innerHTML = content;
+        
+        if (meta) {
+          const metaDiv = document.createElement('div');
+          metaDiv.className = 'message-meta';
+          
+          let metaText = '';
+          if (meta.confidence) metaText += `Confidence: ${(meta.confidence * 100).toFixed(1)}%`;
+          if (meta.scope) metaText += ` | Scope: ${meta.scope}`;
+          if (meta.followup) metaText += ` | Follow-up: ${meta.followup}`;
+          
+          metaDiv.textContent = metaText;
+          messageDiv.appendChild(metaDiv);
+        }
+      } else if (type === 'system') {
+        messageDiv.textContent = content;
+      }
+      
+      chatMessages.appendChild(messageDiv);
+      scrollToBottom();
+      messageCount++;
+      updateTurnCounter();
+      return messageDiv;
+    }
+    
+    function addTypingIndicator() {
+      const chatMessages = document.getElementById('chatMessages');
+      const typingDiv = document.createElement('div');
+      typingDiv.className = 'typing-indicator';
+      typingDiv.id = 'typing-indicator';
+      typingDiv.innerHTML = `
+        <div class="typing-dots">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+        <span>AI is thinking...</span>
+      `;
+      chatMessages.appendChild(typingDiv);
+      scrollToBottom();
+      return typingDiv;
+    }
+    
+    function removeTypingIndicator() {
+      const typingIndicator = document.getElementById('typing-indicator');
+      if (typingIndicator) {
+        typingIndicator.remove();
+      }
+    }
+    
+    function scrollToBottom() {
+      const chatMessages = document.getElementById('chatMessages');
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+    
+    function updateStatus(message) {
+      document.getElementById('statusBar').textContent = message;
+    }
+    
+    function updateTurnCounter() {
+      document.getElementById('turnCounter').textContent = `(${Math.floor(messageCount / 2)} turns)`;
+    }
+    
+    function sendMessage() {
+      console.log('sendMessage() called');
+      
+      const chatInput = document.getElementById('chatInput');
+      const sendBtn = document.getElementById('sendBtn');
+      const query = chatInput.value.trim();
+      
+      console.log('Query:', query);
+      console.log('Current EventSource:', currentEventSource);
+      
+      if (!query) {
+        console.log('No query provided');
+        return;
+      }
+      
+      if (currentEventSource) {
+        console.log('EventSource already active');
+        return;
+      }
+      
+      // Get chat parameters
+      const sessionId = document.getElementById('sessionId').value || 'default_session';
+      const scope = document.getElementById('convScope').value;
+      const folderId = document.getElementById('convFolderId').value || '';
+      const fileId = document.getElementById('convFileId').value || '';
+      
+      // Add user message
+      addMessage(query, 'user');
+      
+      // Clear input and disable send button
+      chatInput.value = '';
+      chatInput.style.height = 'auto';
+      sendBtn.disabled = true;
+      
+      // Add typing indicator
+      const typingIndicator = addTypingIndicator();
+      
+      // Update status
+      updateStatus('Connecting to AI...');
+      
+      // Start SSE stream
+      const params = new URLSearchParams({ 
+        query, scope, 
+        folder_id: folderId, 
+        file_id: fileId, 
+        k: 10 
+      });
+      
+      let connectionTimeout = setTimeout(() => {
+        updateStatus('Connection timeout - please try again');
+        removeTypingIndicator();
+        addMessage('Connection timeout. Please try again.', 'system');
+        resetChatState();
+      }, 30000);
+      
+      currentEventSource = new EventSource(`/chat/conversation/${sessionId}/stream?${params}`);
+      let assistantMessage = null;
+      let assistantText = '';
+      let conversationMeta = null;
+      
+      currentEventSource.addEventListener('status', (e) => {
+        const { msg } = JSON.parse(e.data);
+        updateStatus(msg);
+      });
+      
+      currentEventSource.addEventListener('followup', (e) => {
+        const analysis = JSON.parse(e.data);
+        if (analysis.is_followup) {
+          updateStatus(`Follow-up detected (${(analysis.confidence * 100).toFixed(0)}%)`);
+        }
+      });
+      
+      currentEventSource.addEventListener('meta', (e) => {
+        conversationMeta = JSON.parse(e.data);
+        updateStatus('Generating response...');
+      });
+      
+      currentEventSource.addEventListener('token', (e) => {
+        clearTimeout(connectionTimeout);
+        
+        // Remove typing indicator on first token
+        if (!assistantMessage) {
+          removeTypingIndicator();
+          assistantMessage = addMessage('', 'assistant');
+        }
+        
+        const { t } = JSON.parse(e.data);
+        assistantText += t;
+        assistantMessage.innerHTML = assistantText.replace(/\n/g, '<br>');
+        scrollToBottom();
+      });
+      
+      currentEventSource.addEventListener('done', () => {
+        clearTimeout(connectionTimeout);
+        updateStatus('Response complete');
+        
+        // Add metadata to the assistant message
+        if (assistantMessage && conversationMeta) {
+          const metaDiv = document.createElement('div');
+          metaDiv.className = 'message-meta';
+          
+          let metaText = '';
+          if (conversationMeta.confidence) metaText += `Confidence: ${(conversationMeta.confidence * 100).toFixed(1)}%`;
+          if (conversationMeta.final_scope) metaText += ` | Scope: ${conversationMeta.final_scope.scope}`;
+          if (conversationMeta.conversation_analysis?.is_followup) metaText += ' | Follow-up';
+          
+          metaDiv.textContent = metaText;
+          assistantMessage.appendChild(metaDiv);
+        }
+        
+        resetChatState();
+        setTimeout(() => updateStatus('Ready to chat'), 2000);
+      });
+      
+      currentEventSource.addEventListener('error', (e) => {
+        clearTimeout(connectionTimeout);
+        removeTypingIndicator();
+        
+        try {
+          const errorData = JSON.parse(e.data);
+          addMessage(`Error: ${errorData.error}`, 'system');
+        } catch {
+          addMessage('An error occurred. Please try again.', 'system');
+        }
+        
+        updateStatus('Error occurred');
+        resetChatState();
+      });
+      
+      currentEventSource.onerror = () => {
+        clearTimeout(connectionTimeout);
+        removeTypingIndicator();
+        addMessage('Connection lost. Please check your network and try again.', 'system');
+        updateStatus('Connection lost');
+        resetChatState();
+      };
+    }
+    
+    function resetChatState() {
+      const sendBtn = document.getElementById('sendBtn');
+      sendBtn.disabled = false;
+      
+      if (currentEventSource) {
+        currentEventSource.close();
+        currentEventSource = null;
+      }
+    }
+    
+    function clearSession() {
+      const sessionId = document.getElementById('sessionId').value || 'default_session';
+      
+      if (confirm(`Clear all messages for session "${sessionId}"?`)) {
+        // Clear UI
+        const chatMessages = document.getElementById('chatMessages');
+        chatMessages.innerHTML = `
+          <div class="message system">
+            Session cleared. Welcome back! Upload documents above, then start chatting.
+          </div>
+        `;
+        
+        messageCount = 0;
+        updateTurnCounter();
+        updateStatus('Session cleared');
+        
+        // Clear on server
+        fetch(`/chat/sessions/${sessionId}`, { method: 'DELETE' })
+          .then(res => res.json())
+          .then(data => {
+            console.log('Session cleared:', data);
+          })
+          .catch(err => {
+            console.error('Error clearing session:', err);
+          });
+      }
+    }
+    
+    function loadChatHistory() {
+      const sessionId = document.getElementById('sessionId').value || 'default_session';
+      console.log('Loading chat history for session:', sessionId);
+      
+      fetch(`/chat/sessions/${sessionId}/history`)
+        .then(res => {
+          console.log('History response status:', res.status);
+          return res.json();
+        })
+        .then(data => {
+          console.log('History data received:', data);
+          
+          const chatMessages = document.getElementById('chatMessages');
+          
+          // Clear current messages except welcome
+          chatMessages.innerHTML = `
+            <div class="message system">
+              Welcome! Upload documents above, then start chatting. I'll remember our conversation.
+            </div>
+          `;
+          
+          if (data.history && data.history.length > 0) {
+            console.log('Loading', data.history.length, 'previous messages');
+            data.history.forEach(turn => {
+              addMessage(turn.query, 'user');
+              addMessage(turn.answer.replace(/\n/g, '<br>'), 'assistant', {
+                confidence: turn.confidence,
+                scope: turn.scope
+              });
+            });
+            
+            messageCount = data.history.length * 2;
+            updateTurnCounter();
+          } else {
+            console.log('No previous history found');
+            messageCount = 0;
+            updateTurnCounter();
+          }
+          
+          updateSessionDisplay();
+        })
+        .catch(err => {
+          console.error('Error loading chat history:', err);
+          // Don't fail silently - still initialize the interface
+          const chatMessages = document.getElementById('chatMessages');
+          chatMessages.innerHTML = `
+            <div class="message system">
+              Welcome! Upload documents above, then start chatting. I'll remember our conversation.
+            </div>
+          `;
+          messageCount = 0;
+          updateTurnCounter();
+          updateSessionDisplay();
+        });
+    }
+  </script>
+</body>
+</html>

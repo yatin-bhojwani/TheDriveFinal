@@ -1,0 +1,125 @@
+version: '3.8'
+
+services:
+  backend:
+    # Specifies that the Dockerfile is in the './backend' folder
+    build:
+      context: ./backend
+    ports:
+      # Map port 8000 on the host to port 8000 in the container
+      - "8001:8000"
+    # Load environment variables from the .env file within the backend folder
+    env_file:
+      - ./backend/.env
+    volumes:
+      # Mount the backend directory for live code reloading
+      - ./backend:/app
+    # Ensures that the neo4j service starts before the backend
+    depends_on:
+      - neo4j
+
+  frontend:
+    # This service assumes you have a Dockerfile in your './frontend' folder
+    # Even if you deploy to Vercel, this is useful for local development
+    build:
+      context: ./frontend
+    ports:
+      # Common port for frontend development servers (e.g., React, Vue)
+      - "3000:3000"
+    env_file:
+      - ./frontend/.env
+    # Ensures the backend is running so the frontend can make API calls
+    depends_on:
+      - backend
+
+  chroma:
+    image: ghcr.io/chroma-core/chroma:0.5.5
+    container_name: chroma
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - ANONYMIZED_TELEMETRY=False
+      - CHROMA_SERVER_HOST=0.0.0.0
+      - CHROMA_SERVER_HTTP_PORT=8000
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/chroma
+    volumes:
+      - chroma-data:/chroma
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/heartbeat')"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  # --- Neo4j Graph Database ---
+  neo4j:
+    image: neo4j:5.15-community
+    container_name: neo4j
+    restart: unless-stopped
+    ports:
+      - "7474:7474"  # HTTP
+      - "7687:7687"  # Bolt
+    environment:
+      - NEO4J_AUTH=neo4j/password123
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      - NEO4J_dbms_memory_heap_initial__size=1G
+      - NEO4J_dbms_memory_heap_max__size=2G
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "password123", "RETURN 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # --- FastAPI app (RAG + GraphRAG + SSE) ---
+  api:
+    build:
+      context: ./graphrag/api
+      dockerfile: Dockerfile
+    container_name: thedrive-api
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file:
+    - ./graphrag/.env
+    environment:
+      # URLs for clients inside the Compose network
+      - CHROMA_URL=http://chroma:8000
+      - NEO4J_URL=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=password123
+      # Google Gemini API (for processing)
+      - GEMINI_API_KEY
+      # Separate API key and model for final responses
+      - RESPONSE_API_KEY
+      - RESPONSE_MODEL
+      # Processing models (for embeddings, chunking, etc.)
+      - MODEL_NAME=gemini-1.5-pro
+      - EMBED_MODEL=models/embedding-001
+      # RAG config
+      - COLLECTION=thedrive
+      - MAX_CONTEXT_CHARS=12000
+      # GraphRAG toggle (Neo4j)
+      - ENABLE_GRAPHRAG=1
+      # (optional) set PYTHONUNBUFFERED for better logs
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Persist uploads and any temp files the app writes
+      - app-data:/workspace/data
+    depends_on:
+      chroma:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+
+# Defines the named volume for persisting Neo4j data
+volumes:
+  chroma-data:
+  app-data:
+  neo4j-data:
+  neo4j-logs:
+

@@ -1,0 +1,10 @@
+fastapi[all]
+passlib[bcrypt]
+bcrypt==3.2.0  
+python-jose[cryptography]
+python-multipart
+sqlalchemy
+psycopg2-binary
+boto3
+pydantic-settings
+httpx
