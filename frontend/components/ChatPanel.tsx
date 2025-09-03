@@ -35,16 +35,23 @@ export function ChatPanel({ selectedItem, currentFolderId }: ChatPanelProps) {
   const getChatContext = () => {
     if (selectedItem) {
       if (selectedItem.type === 'file') {
+        const isReady = selectedItem.ingestion_status === 'completed' || selectedItem.ingestion_status === 'failed';
+        const statusText = selectedItem.ingestion_status === 'processing' ? ' (Processing...)' : 
+                          selectedItem.ingestion_status === 'failed' ? ' (Processing Failed - but chat available)' : 
+                          selectedItem.ingestion_status === 'pending' ? ' (Pending Processing)' : '';
+        
         return {
-          placeholder: `Ask about ${selectedItem.name}...`,
-          contextName: selectedItem.name,
-          icon: '📄'
+          placeholder: isReady ? `Ask about ${selectedItem.name}...` : `File is being processed - please wait...`,
+          contextName: selectedItem.name + statusText,
+          icon: '📄',
+          isReady
         };
       } else if (selectedItem.type === 'folder') {
         return {
           placeholder: `Ask about folder "${selectedItem.name}"...`,
           contextName: selectedItem.name,
-          icon: '📁'
+          icon: '📁',
+          isReady: true
         };
       }
     }
@@ -53,25 +60,27 @@ export function ChatPanel({ selectedItem, currentFolderId }: ChatPanelProps) {
       return {
         placeholder: "Ask about your entire drive...",
         contextName: "My Drive",
-        icon: '💾'
+        icon: '💾',
+        isReady: true
       };
     }
     
     return {
       placeholder: "Ask about this folder...",
       contextName: "Current Folder",
-      icon: '📁'
+      icon: '📁',
+      isReady: true
     };
   };
 
-  const { placeholder, contextName, icon } = getChatContext();
+  const { placeholder, contextName, icon, isReady } = getChatContext();
 
   useEffect(() => {
     chatContainerRef.current?.scrollTo({ top: chatContainerRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages]);
 
   const handleSend = () => {
-    if (input.trim() === '' || isLoading) return;
+    if (input.trim() === '' || isLoading || !isReady) return;
 
     const userMessage: Message = { id: Date.now(), text: input, sender: 'user' };
     setMessages((prev) => [...prev, userMessage]);
@@ -177,7 +186,7 @@ export function ChatPanel({ selectedItem, currentFolderId }: ChatPanelProps) {
                     ? 'bg-blue-600 text-white rounded-br-none'
                     : 'bg-gray-100 dark:bg-gray-700 rounded-tl-none'
             }`}>
-              <p className="text-sm whitespace-pre-wrap break-words">{msg.text || (isLoading && msg.id === messages[messages.length - 1].id ? '...' : '')}</p>
+              <p className="text-sm whitespace-pre-wrap break-words">{msg.text || (isLoading && msg.id === messages[messages.length - 1].id ? 'Formulating' : '')}</p>
               {msg.sender === 'ai' && msg.sources && msg.sources.length > 0 && (
                 <div className="text-xs pt-2 mt-2 border-t border-gray-200 dark:border-gray-600">
                   <h4 className="font-bold mb-1">Sources:</h4>
@@ -214,7 +223,11 @@ export function ChatPanel({ selectedItem, currentFolderId }: ChatPanelProps) {
          <div className="relative">
           <textarea
             placeholder={placeholder}
-            className="w-full pl-4 pr-12 py-2 rounded-lg bg-gray-100 dark:bg-gray-700 border border-transparent focus:bg-white dark:focus:bg-gray-800 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none transition-all resize-none"
+            className={`w-full pl-4 pr-12 py-2 rounded-lg border border-transparent focus:bg-white dark:focus:bg-gray-800 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none transition-all resize-none ${
+              isReady 
+                ? 'bg-gray-100 dark:bg-gray-700' 
+                : 'bg-gray-200 dark:bg-gray-600 cursor-not-allowed'
+            }`}
             rows={1}
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -224,11 +237,11 @@ export function ChatPanel({ selectedItem, currentFolderId }: ChatPanelProps) {
                 target.style.height = 'auto';
                 target.style.height = `${Math.min(target.scrollHeight, 120)}px`;
             }}
-            disabled={isLoading}
+            disabled={isLoading || !isReady}
           />
           <button
             onClick={handleSend}
-            disabled={isLoading || !input.trim()}
+            disabled={isLoading || !input.trim() || !isReady}
             className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:bg-blue-400 disabled:cursor-not-allowed">
             <Send className="h-4 w-4" />
           </button>

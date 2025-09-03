@@ -13,6 +13,22 @@ interface FileItemProps {
 }
 
 export const FileGridItem = ({ item, isSelected, onItemClick, onItemDoubleClick, onContextMenu }: FileItemProps) => {
+  const getStatusIndicator = () => {
+    if (item.type === 'file' && item.ingestion_status) {
+      switch (item.ingestion_status) {
+        case 'pending':
+          return <div className="absolute top-2 right-2 w-3 h-3 bg-yellow-400 rounded-full" title="Pending processing" />;
+        case 'processing':
+          return <div className="absolute top-2 right-2 w-3 h-3 bg-blue-400 rounded-full animate-pulse" title="Processing..." />;
+        case 'completed':
+          return <div className="absolute top-2 right-2 w-3 h-3 bg-green-400 rounded-full" title="Ready for AI chat" />;
+        case 'failed':
+          return <div className="absolute top-2 right-2 w-3 h-3 bg-orange-400 rounded-full" title="Processing failed - chat still available" />;
+      }
+    }
+    return null;
+  };
+
   return (
     <div 
       className={`group relative bg-white dark:bg-gray-800 rounded-lg shadow-sm hover:shadow-lg transition-all duration-300 cursor-pointer p-4 flex flex-col justify-between border ${isSelected ? 'border-blue-500 ring-2 ring-blue-500/50' : 'border-gray-200 dark:border-gray-700 hover:border-blue-500 dark:hover:border-blue-500'}`}
@@ -20,6 +36,7 @@ export const FileGridItem = ({ item, isSelected, onItemClick, onItemDoubleClick,
       onDoubleClick={() => onItemDoubleClick(item)}
       onContextMenu={(e) => onContextMenu(e, item)}
     >
+      {getStatusIndicator()}
       <div className="flex items-center gap-3 mb-4">
         {item.type === 'folder' ? (
           <Folder className="w-6 h-6 text-blue-400" />
@@ -31,6 +48,11 @@ export const FileGridItem = ({ item, isSelected, onItemClick, onItemDoubleClick,
       <div className="text-xs text-gray-500 dark:text-gray-400">
         <p>Last modified: {item.lastModified}</p>
         {item.size && <p>Size: {item.size}</p>}
+        {item.type === 'file' && item.ingestion_status && (
+          <p>Status: {item.ingestion_status === 'completed' ? 'Ready for AI' : 
+                     item.ingestion_status === 'processing' ? 'Processing...' : 
+                     item.ingestion_status === 'failed' ? 'Failed - Chat Available' : 'Pending'}</p>
+        )}
       </div>
     </div>
   );

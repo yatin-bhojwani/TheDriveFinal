@@ -11,10 +11,13 @@ import { Header } from '@/components/Header';
 import { CreateFolderModal } from '@/components/CreateFolderModal';
 import { RenameModal } from '@/components/RenameModal';
 import { ContextMenu } from '@/components/ContextMenu';
+import { SearchPanel } from '@/components/SearchPanel';
+import { FloatingActionButton } from '@/components/FloatingActionButton';
 import type { FileSystemItem } from '@/types';
 import { api } from '@/lib/api';
 import { FileViewer } from '@/components/FileViewer';
 import { useAuth } from '@/hooks/useAuth';
+import { useIngestionStatus } from '@/hooks/useIngestionStatus';
 
 function DriveUI() {
   const router = useRouter();
@@ -30,7 +33,15 @@ function DriveUI() {
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, item: FileSystemItem } | null>(null);
   const [uploadStatus, setUploadStatus] = useState<"idle" | "uploading" | "success" | "error">("idle");
   const [selectedItem, setSelectedItem] = useState<FileSystemItem | null>(null);
+  const [searchResults, setSearchResults] = useState<FileSystemItem[]>([]);
+  const [isSearchMode, setIsSearchMode] = useState(false);
   const currentFolderId = searchParams.get('path') || 'root';
+
+  // Hook to automatically check ingestion status for processing files
+  useIngestionStatus({
+    items,
+    onItemsUpdate: setItems
+  });
 
   useEffect(() => {
     const fetchData = async () => {
@@ -144,6 +155,20 @@ function DriveUI() {
     setContextMenu({ x: event.clientX, y: event.clientY, item });
   };
 
+  const handleSearchResults = (results: FileSystemItem[]) => {
+    setSearchResults(results);
+    setIsSearchMode(true);
+  };
+
+  const handleClearSearch = () => {
+    setSearchResults([]);
+    setIsSearchMode(false);
+    setSelectedItem(null);
+  };
+
+  // Use search results when in search mode, otherwise use regular items
+  const displayItems = isSearchMode ? searchResults : items;
+
   if (isLoading) {
     return <div className="h-screen w-full flex items-center justify-center dark:bg-gray-900 dark:text-white">Loading Drive...</div>
   }
@@ -151,9 +176,13 @@ function DriveUI() {
   return (
       <div className="bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 h-screen flex flex-col font-sans" onClick={() => setContextMenu(null)}>
       <Header 
-        onUpload={handleUpload} 
-        onCreateFolder={() => setCreateFolderModalOpen(true)} 
         onToggleChat={() => setChatOpen(!isChatOpen)} 
+      />
+      
+      <SearchPanel 
+        onSearchResults={handleSearchResults}
+        onClearSearch={handleClearSearch}
+        isSearchMode={isSearchMode}
       />
       
       {uploadStatus !== "idle" && (
@@ -172,8 +201,10 @@ function DriveUI() {
         <main className="flex-1 p-6 overflow-y-auto transition-all duration-300">
           <div className="flex justify-between items-center mb-6">
             <div>
-              <h2 className="text-2xl font-semibold">{path[path.length - 1]?.name || 'My Drive'}</h2>
-              <Breadcrumbs path={path} onNavigate={handleBreadcrumbNavigate} /> 
+              <h2 className="text-2xl font-semibold">
+                {isSearchMode ? `Search Results (${displayItems.length})` : (path[path.length - 1]?.name || 'My Drive')}
+              </h2>
+              {!isSearchMode && <Breadcrumbs path={path} onNavigate={handleBreadcrumbNavigate} />}
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => setView('grid')} className={`p-2 rounded-md ${view === 'grid' ? 'bg-gray-200 dark:bg-gray-700' : 'hover:bg-gray-200 dark:hover:bg-gray-700'}`}><LayoutGrid className="h-5 w-5" /></button>
@@ -181,9 +212,13 @@ function DriveUI() {
             </div>
           </div>
           
-          {view === 'grid' ? (
+          {displayItems.length === 0 ? (
+            <div className="text-center py-12 text-gray-500 dark:text-gray-400">
+              {isSearchMode ? 'No results found for your search.' : 'This folder is empty.'}
+            </div>
+          ) : view === 'grid' ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-              {items.map((item) => <FileGridItem 
+              {displayItems.map((item) => <FileGridItem 
                 key={item.id} 
                 item={item} 
                 isSelected={selectedItem?.id === item.id}
@@ -199,7 +234,7 @@ function DriveUI() {
                     <div className="w-1/4">File Size</div>
                 </div>
                 <div className="flex flex-col">
-                    {items.map((item) => <FileListItem 
+                    {displayItems.map((item) => <FileListItem 
                         key={item.id} 
                         item={item} 
                         isSelected={selectedItem?.id === item.id}
@@ -218,6 +253,11 @@ function DriveUI() {
       {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} onRename={() => { setItemToRename(contextMenu.item); setContextMenu(null); }} onDelete={handleDeleteItem} />}
       <CreateFolderModal isOpen={isCreateFolderModalOpen} onClose={() => setCreateFolderModalOpen(false)} onCreate={handleConfirmCreateFolder} isNameTaken={(name) => isNameTaken(name)} />
       <RenameModal item={itemToRename} onClose={() => setItemToRename(null)} onRename={handleRenameItem} isNameTaken={(name, id) => isNameTaken(name, id)} />
+      
+      <FloatingActionButton
+        onUpload={handleUpload}
+        onCreateFolder={() => setCreateFolderModalOpen(true)}
+      />
     </div>
   );
 }

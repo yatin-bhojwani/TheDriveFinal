@@ -1,5 +1,6 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Enum
+from sqlalchemy import Column, Integer, String, ForeignKey, Enum, DateTime
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
 from .database import Base
 
 class User(Base):
@@ -17,6 +18,9 @@ class FileSystemItem(Base):
     s3_key = Column(String, unique=True, nullable=True)
     mime_type = Column(String, nullable=True)
     size_bytes = Column(Integer, nullable=True)
+    ingestion_status = Column(Enum("pending", "processing", "completed", "failed", name="ingestion_status_enum"), nullable=True, default="pending")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     parent_id = Column(String, ForeignKey("filesystem_items.id"), nullable=True)

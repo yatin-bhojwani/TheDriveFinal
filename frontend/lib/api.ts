@@ -1,6 +1,10 @@
-import type { FileSystemItem, FolderResponse } from '@/types';
+import type { FileSystemItem, FolderResponse, SearchFilters } from '@/types';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+// API for file management and authentication
+const API_URL = process.env.NEXT_PUBLIC_API_URL 
+
+// API for the RAG pipeline chat service
+const RAG_API_URL = 'http://34.131.37.148:8000';
 
 async function fetchApi(endpoint: string, options: RequestInit = {}) {
     const headers = new Headers(options.headers);
@@ -9,8 +13,8 @@ async function fetchApi(endpoint: string, options: RequestInit = {}) {
         headers.set('Content-Type', 'application/json');
     }
 
-    const response = await fetch(`${API_URL}${endpoint}`, { 
-        ...options, 
+    const response = await fetch(`${API_URL}${endpoint}`, {
+        ...options,
         headers,
         credentials: 'include'
     });
@@ -35,10 +39,11 @@ async function fetchApi(endpoint: string, options: RequestInit = {}) {
 }
 
 export const api = {
+    // --- TheDrive Backend Calls (Port 8000) ---
     login: (formData: FormData): Promise<{ message: string }> => {
-        return fetchApi('/auth/login', { 
-            method: 'POST', 
-            body: formData 
+        return fetchApi('/auth/login', {
+            method: 'POST',
+            body: formData
         });
     },
     signup: (email: string, password: string): Promise<{ message: string }> => {
@@ -61,7 +66,7 @@ export const api = {
         return fetchApi('/auth/me');
     },
     getItems: (parentId: string): Promise<FolderResponse> => {
-    return fetchApi(`/drive/items?parentId=${parentId}`);
+        return fetchApi(`/drive/items?parentId=${parentId}`);
     },
     createFolder: (name: string, parentId: string): Promise<FileSystemItem> => {
         return fetchApi('/drive/folder', {
@@ -87,9 +92,19 @@ export const api = {
         });
     },
     getViewLink: (itemId: string): Promise<{ url: string }> => {
-    return fetchApi(`/drive/item/${itemId}/view-link`);
+        return fetchApi(`/drive/item/${itemId}/view-link`);
     },
-     // RAG Pipeline SSE Call (Port 8080)
+    getIngestionStatus: (itemId: string): Promise<{ id: string; ingestion_status: string }> => {
+        return fetchApi(`/drive/item/${itemId}/ingestion-status`);
+    },
+    searchItems: (filters: SearchFilters): Promise<FileSystemItem[]> => {
+        return fetchApi('/drive/search', {
+            method: 'POST',
+            body: JSON.stringify(filters),
+        });
+    },
+
+    // RAG Pipeline SSE Call (Port 8080)
     getChatStream: (
         query: string,
         sessionId: string,
@@ -108,8 +123,8 @@ export const api = {
     
     params.append('scope', scope);
 
-    // This targets the endpoint from your drv RAG service
-    const url = `http://api:8080/chat/conversation/${sessionId}/stream?${params.toString()};`
+    // This targets the endpoint from your `drv` RAG service
+    const url = `${RAG_API_URL}/chat/conversation/${sessionId}/stream?${params.toString()}`;
     
     return new EventSource(url);
 },

@@ -8,3 +8,4 @@ psycopg2-binary
 boto3
 pydantic-settings
 httpx
+Pillow

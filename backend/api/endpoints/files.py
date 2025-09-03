@@ -1,6 +1,7 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
-from typing import List
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query
+from typing import List, Optional
 from sqlalchemy.orm import Session
+from sqlalchemy import or_, and_, cast, String
 from db import schemas, models, database
 from core.security import get_current_user
 from services import s3_service
@@ -8,7 +9,10 @@ import uuid
 import io
 import httpx
 import os
+import base64
+from datetime import datetime
 from core.config import settings
+from PIL import Image
 
 router = APIRouter()
 RAG_API_URL = os.getenv("RAG_API_URL", "http://api:8080")
@@ -29,6 +33,102 @@ def get_items(parentId: str = 'root', db: Session = Depends(database.get_db), cu
             path.append({"id": current_folder.id, "name": current_folder.name})
 
     return {"items": items, "path": path}
+
+@router.post("/search", response_model=List[schemas.FileSystemItem])
+def search_items(
+    filters: schemas.SearchFilters,
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Search and filter filesystem items based on various criteria"""
+    query = db.query(models.FileSystemItem).filter(
+        models.FileSystemItem.owner_id == current_user.id
+    )
+    
+    # Text search in file/folder names
+    if filters.query:
+        query = query.filter(
+            models.FileSystemItem.name.ilike(f"%{filters.query}%")
+        )
+    
+    # Filter by item type (file/folder)
+    if filters.item_type:
+        query = query.filter(models.FileSystemItem.type == filters.item_type)
+    
+    # Filter by mime type (exact match)
+    if filters.mime_type:
+        query = query.filter(models.FileSystemItem.mime_type == filters.mime_type)
+    
+    # Filter by file type (extension-based or category-based)
+    if filters.file_type:
+        if filters.file_type.lower() in ['image', 'images']:
+            # Image files
+            query = query.filter(
+                models.FileSystemItem.mime_type.like('image/%')
+            )
+        elif filters.file_type.lower() in ['document', 'documents']:
+            # Document files
+            query = query.filter(
+                or_(
+                    models.FileSystemItem.mime_type.in_([
+                        'application/pdf',
+                        'application/msword',
+                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                        'text/plain'
+                    ])
+                )
+            )
+        elif filters.file_type.lower() in ['video', 'videos']:
+            # Video files
+            query = query.filter(
+                models.FileSystemItem.mime_type.like('video/%')
+            )
+        elif filters.file_type.lower() in ['audio']:
+            # Audio files
+            query = query.filter(
+                models.FileSystemItem.mime_type.like('audio/%')
+            )
+        else:
+            # Assume it's a file extension
+            query = query.filter(
+                models.FileSystemItem.name.ilike(f"%.{filters.file_type}")
+            )
+    
+    # Filter by ingestion status
+    if filters.ingestion_status:
+        query = query.filter(
+            models.FileSystemItem.ingestion_status == filters.ingestion_status
+        )
+    
+    # Filter by date range (created_at)
+    if filters.date_from:
+        try:
+            date_from = datetime.fromisoformat(filters.date_from.replace('Z', '+00:00'))
+            query = query.filter(models.FileSystemItem.created_at >= date_from)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date_from format")
+    
+    if filters.date_to:
+        try:
+            date_to = datetime.fromisoformat(filters.date_to.replace('Z', '+00:00'))
+            query = query.filter(models.FileSystemItem.created_at <= date_to)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date_to format")
+    
+    # Filter by file size range
+    if filters.min_size is not None:
+        query = query.filter(models.FileSystemItem.size_bytes >= filters.min_size)
+    
+    if filters.max_size is not None:
+        query = query.filter(models.FileSystemItem.size_bytes <= filters.max_size)
+    
+    # Order by updated date (most recent first)
+    query = query.order_by(models.FileSystemItem.updated_at.desc())
+    
+    # Limit results to prevent overwhelming responses
+    results = query.limit(100).all()
+    
+    return results
 
 @router.post("/upload", response_model=schemas.FileSystemItem, status_code=201)
 async def upload_file(
@@ -64,57 +164,98 @@ async def upload_file(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to upload to S3: {str(e)}")
 
-    # Step 2: Save file metadata to TheDrive's primary database.
+    # Step 2: Save file metadata to TheDrive's primary database with pending status.
     new_file = models.FileSystemItem(
         id=file_id, name=file.filename, type="file", s3_key=s3_key,
         mime_type=file.content_type, size_bytes=file_size, owner_id=current_user.id,
-        parent_id=None if parentId == 'root' else parentId
+        parent_id=None if parentId == 'root' else parentId,
+        ingestion_status="pending"  # Start with pending status
     )
     db.add(new_file)
     db.commit()
     db.refresh(new_file)
 
-    # Step 3: Forward the file to the RAG service for ingestion.
+    # Step 3: Start background ingestion process
+    import asyncio
+    if file.content_type and file.content_type.startswith('image/'):
+        # For images, start both RAG ingestion and image analysis
+        asyncio.create_task(process_file_ingestion(file_id, file.filename, contents, file.content_type, parentId))
+        asyncio.create_task(process_image_analysis(file_id, file.filename, contents, file.content_type))
+    else:
+        # For non-images, just do RAG ingestion
+        asyncio.create_task(process_file_ingestion(file_id, file.filename, contents, file.content_type, parentId))
+
+    return new_file
+
+
+async def process_file_ingestion(file_id: str, filename: str, contents: bytes, content_type: str, parent_id: str):
+    """Background task to handle file ingestion"""
+    db = database.SessionLocal()
     try:
-        files = {'file': (file.filename, contents, file.content_type)}
-        data = {'file_id': file_id, 'folder_id': parentId if parentId != 'root' else ''}
+        # Update status to processing
+        file_item = db.query(models.FileSystemItem).filter_by(id=file_id).first()
+        if not file_item:
+            print(f"File {file_id} not found for ingestion")
+            return
+            
+        file_item.ingestion_status = "processing"
+        db.commit()
+        print(f"Started processing ingestion for file_id {file_id}")
+
+        # Process with RAG service
+        files = {'file': (filename, contents, content_type)}
+        data = {'file_id': file_id, 'folder_id': parent_id if parent_id != 'root' else ''}
         ingest_url = f"{RAG_API_URL}/ingest/file"
 
-        # Use a very long timeout to allow for model processing and ingestion.
-        # Set separate timeouts for connect vs read operations
-        timeout = httpx.Timeout(connect=100.0, read=6000.0, write=6001.0, pool=None)
+        # Use a very long timeout to allow for model processing and ingestion
+        timeout = httpx.Timeout(connect=30.0, read=600.0, write=60.0, pool=None)
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(ingest_url, files=files, data=data)
             response.raise_for_status()
             print(f"RAG Ingestion successful for file_id {file_id}: {response.json()}")
+            
+            # Update status to completed
+            file_item.ingestion_status = "completed"
+            db.commit()
+            print(f"Ingestion completed for file_id {file_id}")
 
     except (httpx.RequestError, httpx.HTTPStatusError) as exc:
-        # If ingestion fails, attempt rollback but don't fail if rollback also fails
         print(f"RAG Ingestion failed for file_id {file_id}. Error: {exc}")
-        print("Attempting rollback...")
         
+        # Update status to failed
         try:
-            # Try to rollback database entry
-            db.refresh(new_file)  # Refresh to ensure we have the latest state
-            db.delete(new_file)
-            db.commit()
-            print(f"Database rollback successful for file_id {file_id}")
+            file_item = db.query(models.FileSystemItem).filter_by(id=file_id).first()
+            if file_item:
+                file_item.ingestion_status = "failed"
+                db.commit()
+                print(f"Marked ingestion as failed for file_id {file_id}")
         except Exception as db_exc:
-            print(f"Database rollback failed for file_id {file_id}: {db_exc}")
-            # Don't fail the request if rollback fails - log and continue
+            print(f"Failed to update ingestion status for {file_id}: {db_exc}")
             
-        try:
-            # Try to rollback S3 upload
-            s3_service.delete_file(settings.S3_BUCKET_NAME, s3_key)
-            print(f"S3 rollback successful for file_id {file_id}")
-        except Exception as s3_exc:
-            print(f"S3 rollback failed for file_id {file_id}: {s3_exc}")
-            # Don't fail the request if S3 rollback fails - log and continue
+    except Exception as e:
+        print(f"Unexpected error during ingestion for {file_id}: {e}")
         
-        detail = f"Error from RAG service: {exc.response.text}" if isinstance(exc, httpx.HTTPStatusError) else f"Failed to connect to RAG service: {exc}"
-        raise HTTPException(status_code=502, detail=detail)
+        # Update status to failed
+        try:
+            file_item = db.query(models.FileSystemItem).filter_by(id=file_id).first()
+            if file_item:
+                file_item.ingestion_status = "failed"
+                db.commit()
+        except Exception as db_exc:
+            print(f"Failed to update ingestion status for {file_id}: {db_exc}")
+    finally:
+        db.close()
 
-    return new_file
+
+@router.get("/item/{item_id}/ingestion-status")
+def get_ingestion_status(item_id: str, db: Session = Depends(database.get_db), current_user: models.User = Depends(get_current_user)):
+    """Get the ingestion status of a file"""
+    item = db.query(models.FileSystemItem).filter_by(id=item_id, owner_id=current_user.id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    
+    return {"id": item.id, "ingestion_status": item.ingestion_status}
+
 
 @router.post("/folder", response_model=schemas.FileSystemItem, status_code=201)
 def create_folder(folder: schemas.FolderCreate, db: Session = Depends(database.get_db), current_user: models.User = Depends(get_current_user)):
@@ -279,3 +420,100 @@ def get_view_link(item_id: str, db: Session = Depends(database.get_db), current_
     
     url = s3_service.generate_presigned_url(settings.S3_BUCKET_NAME, item.s3_key )
     return {"url": url}
+
+@router.get("/item/{item_id}/image-analysis")
+def get_image_analysis(item_id: str, db: Session = Depends(database.get_db), current_user: models.User = Depends(get_current_user)):
+    """Get analysis results for an uploaded image"""
+    item = db.query(models.FileSystemItem).filter_by(id=item_id, owner_id=current_user.id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    
+    if not item.mime_type or not item.mime_type.startswith('image/'):
+        raise HTTPException(status_code=400, detail="Item is not an image")
+    
+    # For now, return basic info about the image
+    # In a full implementation, you'd fetch stored analysis from a separate table
+    return {
+        "id": item.id,
+        "filename": item.name,
+        "mime_type": item.mime_type,
+        "size_bytes": item.size_bytes,
+        "ingestion_status": item.ingestion_status,
+        "is_image": True,
+        "analysis_available": item.ingestion_status == "completed",
+        "message": "Image analysis data would be retrieved from analysis storage table"
+    }
+
+async def process_image_analysis(file_id: str, filename: str, contents: bytes, content_type: str):
+    """Background task to analyze uploaded images"""
+    db = database.SessionLocal()
+    VISION_API_URL = os.getenv("VISION_API_URL", "http://localhost:8081")
+    
+    try:
+        print(f"Starting image analysis for file_id {file_id}")
+        
+        # Extract basic image metadata
+        try:
+            image = Image.open(io.BytesIO(contents))
+            metadata = {
+                "width": image.width,
+                "height": image.height,
+                "format": image.format,
+                "mode": image.mode,
+                "size_bytes": len(contents)
+            }
+        except Exception as e:
+            metadata = {"error": f"Failed to extract metadata: {str(e)}"}
+        
+        # Perform AI analysis if vision service is available
+        analysis_result = None
+        try:
+            image_b64 = base64.b64encode(contents).decode('utf-8')
+            payload = {
+                "image": image_b64,
+                "prompt": "Analyze this image and describe what you see, including objects, text, colors, and overall content.",
+                "max_tokens": 500
+            }
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(f"{VISION_API_URL}/analyze", json=payload)
+                if response.status_code == 200:
+                    analysis_result = response.json()
+                    print(f"Image analysis successful for {file_id}")
+                else:
+                    print(f"Vision API returned status {response.status_code}")
+                    
+        except Exception as e:
+            print(f"Vision API call failed for {file_id}: {e}")
+            analysis_result = {
+                "analysis": "Image uploaded successfully. AI analysis service unavailable.",
+                "metadata": metadata
+            }
+        
+        # Store analysis results (could be in a separate table, for now just log)
+        print(f"Image analysis completed for {file_id}:")
+        print(f"- Metadata: {metadata}")
+        if analysis_result:
+            print(f"- Analysis: {analysis_result.get('analysis', 'No analysis available')}")
+        
+        # Update the file status to indicate analysis is complete
+        file_item = db.query(models.FileSystemItem).filter_by(id=file_id).first()
+        if file_item and file_item.ingestion_status == "pending":
+            # Only update if still pending (RAG might have already updated it)
+            file_item.ingestion_status = "completed"
+            db.commit()
+            
+    except Exception as e:
+        print(f"Image analysis failed for {file_id}: {e}")
+        
+        # Update status to failed if there was an error
+        try:
+            file_item = db.query(models.FileSystemItem).filter_by(id=file_id).first()
+            if file_item:
+                file_item.ingestion_status = "failed"
+                db.commit()
+        except Exception as db_exc:
+            print(f"Failed to update ingestion status for {file_id}: {db_exc}")
+            
+    finally:
+        db.close()
