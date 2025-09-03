@@ -4,7 +4,7 @@ import type { FileSystemItem, FolderResponse, SearchFilters } from '@/types';
 const API_URL = process.env.NEXT_PUBLIC_API_URL 
 
 // API for the RAG pipeline chat service
-const RAG_API_URL = 'http://34.131.37.148:8000';
+const RAG_API_URL = 'http://34.131.37.148:8080';
 
 async function fetchApi(endpoint: string, options: RequestInit = {}) {
     const headers = new Headers(options.headers);
